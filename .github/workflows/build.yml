@@ -4,12 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag (e.g., v1.2.3)'
         required: false
         type: string
   push:
     branches:
-      - main  # 注意：你用的是 main 分支，不是 master
+      - master
 
 jobs:
   build:
@@ -35,8 +34,9 @@ jobs:
           --channel=0 \
           --install "ndk;28.2.13676358"
         echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
-        # 更安全：通过 gradle.properties 设置 NDK 版本
-        echo "android.ndkVersion=28.2.13676358" >> gradle.properties
+        sed -i '10i\
+        \
+            ndkVersion = "28.2.13676358"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
 
     - name: Restore cached libhevtun
       id: cache-libhevtun-restore
@@ -49,7 +49,7 @@ jobs:
       if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
       run: |
         bash compile-hevtun.sh
-
+    
     - name: Save libhevtun
       if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
@@ -59,12 +59,13 @@ jobs:
 
     - name: Copy libhevtun
       run: |
-        cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/app
+        cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
 
     - name: Fetch AndroidLibXrayLite tag
       run: |
         pushd AndroidLibXrayLite
         CURRENT_TAG=$(git describe --tags --abbrev=0)
+        echo "Current tag in this repo: $CURRENT_TAG"
         echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
         popd
 
@@ -74,7 +75,7 @@ jobs:
         repository: '2dust/AndroidLibXrayLite'
         tag: ${{ env.CURRENT_TAG }}
         fileName: 'libv2ray.aar'
-        out-file-path: app/libs/
+        out-file-path: V2rayNG/app/libs/
 
     - name: Restore cached libhysteria2
       id: cache-libhysteria2-restore
@@ -104,7 +105,7 @@ jobs:
 
     - name: Copy libhysteria2
       run: |
-        cp -r ${{ github.workspace }}/hysteria/libs ${{ github.workspace }}/app
+        cp -r ${{ github.workspace }}/hysteria/libs ${{ github.workspace }}/V2rayNG/app
 
     - name: Setup Java
       uses: actions/setup-java@v4.7.0
@@ -121,42 +122,38 @@ jobs:
 
     - name: Build APK
       run: |
+        cd ${{ github.workspace }}/V2rayNG
         echo "sdk.dir=${ANDROID_HOME}" > local.properties
-        chmod +x gradlew
+        chmod 755 gradlew
         ./gradlew licenseFdroidReleaseReport
-        ./gradlew assembleRelease \
-          -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} \
-          -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} \
-          -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} \
-          -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
-
+        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+    
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v4.6.2
-      if: success()
+      if: ${{  success() }}
       with:
         name: arm64-v8a
-        path: ${{ github.workspace }}/app/build/outputs/apk/*/release/*arm64-v8a*.apk
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
 
     - name: Upload armeabi-v7a APK
       uses: actions/upload-artifact@v4.6.2
-      if: success()
+      if: ${{  success() }}
       with:
         name: armeabi-v7a
-        path: ${{ github.workspace }}/app/build/outputs/apk/*/release/*armeabi-v7a*.apk
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*armeabi-v7a*.apk
 
     - name: Upload x86 APK
       uses: actions/upload-artifact@v4.6.2
-      if: success()
+      if: ${{  success() }}
       with:
         name: x86-apk
-        path: ${{ github.workspace }}/app/build/outputs/apk/*/release/*x86*.apk
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*x86*.apk
 
-    - name: Upload to GitHub Release
+    - name: Upload to release
       uses: svenstaro/upload-release-action@v2
       if: github.event.inputs.release_tag != ''
       with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: ${{ github.workspace }}/app/build/outputs/apk/*/release/*.apk
+        file: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*.apk
         tag: ${{ github.event.inputs.release_tag }}
         file_glob: true
         prerelease: true
